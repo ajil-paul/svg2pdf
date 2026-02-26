@@ -125,6 +125,26 @@ impl ResourceContainer {
         self.add_resource_entry(reference, PendingResourceType::XObject)
     }
 
+    /// Add an externally-provided XObject with a specific name and reference.
+    ///
+    /// Unlike [`add_x_object`](Self::add_x_object), this uses the caller's
+    /// chosen name instead of auto-allocating one. If the same reference was
+    /// already registered, the existing name is returned (for deduplication).
+    pub fn add_external_x_object(&mut self, name: String, reference: Ref) -> Rc<String> {
+        self.pending_resources
+            .entry(reference)
+            .or_insert_with(|| {
+                let name = Rc::new(name);
+                PendingResource {
+                    object_type: PendingResourceType::XObject,
+                    name: name.clone(),
+                    reference,
+                }
+            })
+            .name
+            .clone()
+    }
+
     /// Add a new Shading as a resource. Returns the name of the Shading.
     pub fn add_shading(&mut self, reference: Ref) -> Rc<String> {
         self.add_resource_entry(reference, PendingResourceType::Shading)

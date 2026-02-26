@@ -28,6 +28,7 @@ fn run() -> Result<(), String> {
             embed_text: !args.text_to_paths,
             raster_scale: args.raster_scale,
             pdfa: false,
+            image_provider: None,
         };
 
         let page_options = PageOptions { dpi: args.dpi };

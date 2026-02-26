@@ -1,10 +1,10 @@
-use pdf_writer::{Chunk, Content, Filter, Finish, Ref};
-use usvg::{Node, Transform, Tree};
+use pdf_writer::{Chunk, Content, Filter, Finish, Name, Ref};
+use usvg::{Node, Size, Transform, Tree};
 
 use crate::util::context::Context;
 use crate::util::helper::{ContentExt, RectExt, TransformExt};
 use crate::util::resources::ResourceContainer;
-use crate::Result;
+use crate::{ExternalImage, Result};
 
 pub mod clip_path;
 #[cfg(feature = "filters")]
@@ -70,6 +70,51 @@ pub fn tree_to_xobject(tree: &Tree, chunk: &mut Chunk, ctx: &mut Context) -> Res
     Ok(x_ref)
 }
 
+/// Render an externally-provided image into the content stream.
+///
+/// This emits the same coordinate transforms that the normal image rendering
+/// path would, but references an external XObject name via the `Do` operator
+/// instead of encoding the image data into the chunk.
+fn render_external_image(
+    image: &usvg::Image,
+    ext: ExternalImage,
+    content: &mut Content,
+    rc: &mut ResourceContainer,
+) -> Result<()> {
+    if !image.is_visible() {
+        return Ok(());
+    }
+
+    let image_size = Size::from_wh(ext.width, ext.height)
+        .ok_or(crate::ConversionError::InvalidImage)?;
+
+    // Register the external XObject in the resource dictionary using the
+    // caller-provided name and reference.
+    let name_str = String::from_utf8(ext.name)
+        .map_err(|_| crate::ConversionError::InvalidImage)?;
+    rc.add_external_x_object(name_str.clone(), ext.r#ref);
+
+    content.save_state_checked()?;
+
+    // Scale the image from the default 1×1 XObject size to the actual
+    // image dimensions, with a vertical flip (PDF y-up → SVG y-down).
+    content.transform(
+        Transform::from_row(
+            image_size.width(),
+            0.0,
+            0.0,
+            -image_size.height(),
+            0.0,
+            image_size.height(),
+        )
+        .to_pdf_transform(),
+    );
+    content.x_object(Name(name_str.as_bytes()));
+    content.restore_state();
+
+    Ok(())
+}
+
 trait Render {
     fn render(
         &self,
@@ -97,20 +142,32 @@ impl Render for Node {
             Node::Group(ref group) => {
                 group::render(group, chunk, content, ctx, accumulated_transform, None, rc)
             }
-            #[cfg(feature = "image")]
-            Node::Image(ref image) => image::render(
-                image.is_visible(),
-                image.kind(),
-                None,
-                chunk,
-                content,
-                ctx,
-                rc,
-            ),
-            #[cfg(not(feature = "image"))]
-            Node::Image(_) => {
-                log::warn!("Failed convert image because the image feature was disabled. Skipping.");
-                Ok(())
+            Node::Image(ref image) => {
+                // Check the external image provider first.
+                if let Some(ext) =
+                    ctx.options.image_provider.as_ref().and_then(|p| p(image))
+                {
+                    return render_external_image(image, ext, content, rc);
+                }
+
+                #[cfg(feature = "image")]
+                {
+                    image::render(
+                        image.is_visible(),
+                        image.kind(),
+                        None,
+                        chunk,
+                        content,
+                        ctx,
+                        rc,
+                    )
+                }
+
+                #[cfg(not(feature = "image"))]
+                {
+                    log::warn!("Failed convert image because the image feature was disabled. Skipping.");
+                    Ok(())
+                }
             }
             #[cfg(feature = "text")]
             Node::Text(ref text) => {

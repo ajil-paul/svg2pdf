@@ -42,7 +42,7 @@ impl Context {
         };
 
         #[cfg(feature = "text")]
-        if options.embed_text {
+        if ctx.options.embed_text {
             text::fill_fonts(tree.root(), &mut ctx, tree.fontdb().as_ref())?;
         }
 
